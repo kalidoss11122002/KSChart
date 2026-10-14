@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="ta"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>KSChat</title><link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#0b6e4f"><link rel="icon" href="/icon.svg"><link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+body{margin:0;font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;background:#f4f1ea;color:#222}
+header{background:#0b6e4f;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+#top{display:flex;gap:8px;padding:8px;background:#fff}
+input{padding:10px;border:1px solid #ccc;border-radius:10px;font-size:1rem;flex:1;min-width:0}
+button{padding:10px 14px;border:0;border-radius:10px;background:#0b6e4f;color:#fff;font-size:1rem;cursor:pointer}
+#log{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:80%;padding:8px 12px;border-radius:12px;background:#fff;word-break:break-word}
+.m.out{align-self:flex-end;background:#d7f5dd}.m.sys{align-self:center;background:none;color:#777;font-size:.85rem}
+.m img{max-width:100%;border-radius:8px;display:block}
+#bar{display:flex;gap:6px;padding:8px;background:#fff}
+#call{display:none;position:fixed;inset:0;background:#000;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#rv{width:100%;max-height:75vh;background:#111}#lv{position:absolute;right:10px;top:10px;width:90px;border-radius:8px}
+</style></head><body>
+<header><div>🛰️ KSChat — un code: <b id="me"></b></div><div id="st">…</div></header>
+<div id="top"><input id="to" placeholder="Yaarukku? Avanga code (e.g. K7P2QD)" autocapitalize="characters"><button id="callbtn">📞</button></div>
+<div id="log"></div>
+<div id="bar"><button id="pic">📷</button><input id="txt" placeholder="Message type pannunga..."><button id="go">➤</button><input id="file" type="file" accept="image/*" hidden></div>
+<div id="call"><video id="rv" autoplay playsinline></video><video id="lv" autoplay playsinline muted></video><button id="hang" style="background:#c62828">Call mudikka</button></div>
+<script>
+// Satellite/CGNAT networks usually need a TURN server too. Add yours here:
+const ICE=[{urls:'stun:stun.l.google.com:19302'}/*,{urls:'turn:YOUR_SERVER:3478',username:'user',credential:'pass'}*/];
+const $=id=>document.getElementById(id);
+let me=localStorage.sc_id;if(!me){me=Math.random().toString(36).slice(2,8).toUpperCase();localStorage.sc_id=me}$('me').textContent=me;
+let ws,pc,stream,buf=[],out=[];try{out=JSON.parse(localStorage.sc_out||'[]')}catch(e){}
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function add(cls,h){const d=document.createElement('div');d.className='m '+cls;d.innerHTML=h;$('log').append(d);$('log').scrollTop=1e9}
+const target=()=>$('to').value.trim().toUpperCase();
+function raw(o){if(ws&&ws.readyState===1){ws.send(JSON.stringify(o));return true}return false}
+function send(o){if(!raw(o)){out.push(o);try{localStorage.sc_out=JSON.stringify(out)}catch(e){}add('sys','📴 Offline: net vandha udane anuppidum')}}
+function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+ ws.onopen=()=>{raw({t:'hello',id:me});$('st').textContent='🟢 online';const o=out;out=[];localStorage.sc_out='[]';o.forEach(raw)};
+ ws.onclose=()=>{$('st').textContent='🔴 offline';setTimeout(connect,3000)};
+ ws.onmessage=e=>onMsg(JSON.parse(e.data))}
+async function onMsg(m){
+ if(m.t==='msg')add('in','<b>'+esc(m.from)+'</b>: '+esc(m.d));
+ else if(m.t==='img')add('in','<b>'+esc(m.from)+'</b><img src="'+m.d+'">');
+ else if(m.t==='queued')add('sys','📬 '+esc(m.to)+' offline. Avanga vandha udane kidaikkum');
+ else if(m.t==='offline')add('sys','📵 '+esc(m.to)+' online-la illa. Call mudiyaadhu');
+ else if(m.t==='offer'){if(!confirm(m.from+' call pandraanga. Edukkalaama?')){raw({t:'hangup',to:m.from});return}
+  await startPC(m.from);await pc.setRemoteDescription(m.d);buf.forEach(c=>pc.addIceCandidate(c));buf=[];
+  const a=await pc.createAnswer();await pc.setLocalDescription(a);raw({t:'answer',to:m.from,d:a})}
+ else if(m.t==='answer'&&pc)pc.setRemoteDescription(m.d);
+ else if(m.t==='ice'){pc&&pc.remoteDescription?pc.addIceCandidate(m.c):buf.push(m.c)}
+ else if(m.t==='hangup')endCall();
+}
+$('go').onclick=()=>{const to=target(),d=$('txt').value.trim();if(!to||!d)return;send({t:'msg',to,d});add('out',esc(d));$('txt').value=''};
+$('txt').onkeydown=e=>{if(e.key==='Enter')$('go').click()};
+$('pic').onclick=()=>$('file').click();
+$('file').onchange=e=>{const to=target(),f=e.target.files[0];if(!f||!to)return alert('Mudhalla code type pannunga');
+ const im=new Image();im.onload=()=>{const s=Math.min(1,640/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;
+  c.getContext('2d').drawImage(im,0,0,c.width,c.height);const d=c.toDataURL('image/jpeg',.6);  // small size = good for slow links
+  send({t:'img',to,d});add('out','<img src="'+d+'">')};im.src=URL.createObjectURL(f);e.target.value=''};
+async function startPC(to){pc=new RTCPeerConnection({iceServers:ICE});
+ stream=await navigator.mediaDevices.getUserMedia({video:{width:320,height:240,frameRate:15},audio:true});
+ $('lv').srcObject=stream;stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+ pc.ontrack=e=>$('rv').srcObject=e.streams[0];pc.onicecandidate=e=>e.candidate&&raw({t:'ice',to,c:e.candidate});$('call').style.display='flex'}
+$('callbtn').onclick=async()=>{const to=target();if(!to)return alert('Code type pannunga');
+ try{await startPC(to);const o=await pc.createOffer();await pc.setLocalDescription(o);raw({t:'offer',to,d:o})}catch(e){alert('Camera/mic error: '+e.message);endCall()}};
+function endCall(){pc&&pc.close();stream&&stream.getTracks().forEach(t=>t.stop());pc=null;stream=null;$('call').style.display='none'}
+$('hang').onclick=()=>{raw({t:'hangup',to:target()});endCall()};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
+connect();
+</script></body></html>
